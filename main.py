@@ -12,8 +12,8 @@ from fastapi import FastAPI, HTTPException
 load_dotenv()
 
 app = FastAPI()
-print("DEBUG - key present:", bool(os.environ.get("GEMINI_API_KEY")))
-print("DEBUG - key length:", len(os.environ.get("GEMINI_API_KEY", "")))
+#print("DEBUG - key present:", bool(os.environ.get("GEMINI_API_KEY")))
+#print("DEBUG - key length:", len(os.environ.get("GEMINI_API_KEY", "")))
 client = genai.Client()
 
 SYSTEM_INSTRUCTION = """You are a code generator. Given a description of a web app,
