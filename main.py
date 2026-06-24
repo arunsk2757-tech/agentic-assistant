@@ -1,6 +1,6 @@
+import time
 import os
 import re
-import time
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -100,14 +100,22 @@ def build(req: BuildRequest):
     steps_log = []
 
     for step in range(MAX_STEPS):
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=BUILD_SYSTEM_INSTRUCTION,
-                tools=[build_tool],
-            ),
-        )
+        response = None
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=BUILD_SYSTEM_INSTRUCTION,
+                        tools=[build_tool],
+                    ),
+                )
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise HTTPException(status_code=503, detail="Gemini is busy right now — please try again in a moment.")
+                time.sleep(2 ** attempt)
 
         if not response.function_calls:
             steps_log.append("Done: " + (response.text or "Build complete."))
