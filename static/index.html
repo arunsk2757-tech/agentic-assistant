@@ -1,52 +1,301 @@
 <!DOCTYPE html>
-<html>
+
+<html lang="en">
 <head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AI App Builder</title>
+
 <style>
-  body { font-family: sans-serif; margin: 0; display: flex; height: 100vh; }
-  .panel { width: 35%; padding: 20px; box-sizing: border-box; }
-  textarea { width: 100%; height: 120px; }
-  button { margin-top: 10px; padding: 10px 20px; cursor: pointer; }
-  iframe { width: 65%; height: 100vh; border: none; border-left: 1px solid #ccc; }
-  #status { color: gray; margin-top: 10px; }
-</style>
-</head>
-<body>
-  <div class="panel">
-    <h2>Describe your app</h2>
-    <textarea id="prompt" placeholder="e.g. a todo list app"></textarea>
-    <br>
-    <button onclick="generateApp()">Generate</button>
-    <div id="status"></div>
-  </div>
-  <iframe id="preview"></iframe>
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+}
 
-<script>
-async function generateApp() {
-  const prompt = document.getElementById('prompt').value;
-  const status = document.getElementById('status');
-  status.textContent = "Generating...";
+body{
+    font-family: Arial, Helvetica, sans-serif;
+    display:flex;
+    height:100vh;
+    background:#f5f7fa;
+}
 
-  try {
-    const res = await fetch('/generate', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({prompt})
-    });
+.panel{
+    width:35%;
+    min-width:350px;
+    padding:20px;
+    overflow-y:auto;
+    background:white;
+    border-right:1px solid #ddd;
+}
 
-    if (!res.ok) {
-      const err = await res.json();
-      status.textContent = "Error: " + err.detail;
-      return;
+.panel h1{
+    margin-bottom:20px;
+    color:#333;
+}
+
+.panel h2{
+    margin:20px 0 10px;
+    color:#444;
+}
+
+textarea{
+    width:100%;
+    min-height:120px;
+    padding:12px;
+    border:1px solid #ccc;
+    border-radius:8px;
+    resize:vertical;
+    font-size:14px;
+}
+
+button{
+    margin-top:10px;
+    padding:10px 18px;
+    border:none;
+    border-radius:8px;
+    background:#2563eb;
+    color:white;
+    cursor:pointer;
+    font-size:14px;
+}
+
+button:hover{
+    background:#1d4ed8;
+}
+
+#status,
+#buildStatus{
+    margin-top:10px;
+    color:#555;
+    font-size:14px;
+}
+
+#fileList{
+    margin-top:15px;
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+}
+
+#fileList button{
+    margin-top:0;
+    background:#16a34a;
+}
+
+#fileList button:hover{
+    background:#15803d;
+}
+
+.preview-container{
+    flex:1;
+    background:white;
+}
+
+iframe{
+    width:100%;
+    height:100%;
+    border:none;
+}
+
+hr{
+    margin:25px 0;
+    border:none;
+    border-top:1px solid #ddd;
+}
+
+@media(max-width:768px){
+    body{
+        flex-direction:column;
     }
 
-    const data = await res.json();
-    document.getElementById('preview').srcdoc = data.code;
-    status.textContent = "Done!";
-  } catch (e) {
-    status.textContent = "Something went wrong. Try again.";
-  }
+    .panel{
+        width:100%;
+        min-width:unset;
+        height:auto;
+    }
+
+    .preview-container{
+        width:100%;
+        height:50vh;
+    }
+}
+</style>
+
+</head>
+
+<body>
+
+<div class="panel">
+
+```
+<h1>AI App Builder</h1>
+
+<h2>Single File App</h2>
+
+<textarea
+    id="prompt"
+    placeholder="Example: Build a modern todo list app with dark mode">
+</textarea>
+
+<button onclick="generateApp()">Generate App</button>
+
+<div id="status"></div>
+
+<hr>
+
+<h2>Multi-File Project Builder</h2>
+
+<textarea
+    id="buildPrompt"
+    placeholder="Example: Build a portfolio website with Home, About, Projects and Contact pages">
+</textarea>
+
+<button onclick="buildProject()">Build Project</button>
+
+<div id="buildStatus"></div>
+
+<div id="fileList"></div>
+```
+
+</div>
+
+<div class="preview-container">
+    <iframe id="preview"></iframe>
+</div>
+
+<script>
+
+async function generateApp() {
+
+    const prompt = document.getElementById("prompt").value.trim();
+    const status = document.getElementById("status");
+
+    if (!prompt) {
+        status.textContent = "Please enter a prompt.";
+        return;
+    }
+
+    status.textContent = "Generating app...";
+
+    try {
+
+        const res = await fetch("/generate", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ prompt })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            status.textContent =
+                "Error: " + (err.detail || "Unknown error");
+            return;
+        }
+
+        const data = await res.json();
+
+        document.getElementById("preview").srcdoc = data.code;
+
+        status.textContent = "App generated successfully.";
+
+    } catch (error) {
+
+        console.error(error);
+
+        status.textContent =
+            "Something went wrong while generating the app.";
+
+    }
+}
+
+async function buildProject() {
+
+    const prompt =
+        document.getElementById("buildPrompt").value.trim();
+
+    const status =
+        document.getElementById("buildStatus");
+
+    const fileList =
+        document.getElementById("fileList");
+
+    if (!prompt) {
+        status.textContent = "Please enter a project description.";
+        return;
+    }
+
+    status.textContent =
+        "Building project... this may take a few moments.";
+
+    fileList.innerHTML = "";
+
+    try {
+
+        const res = await fetch("/build", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ prompt })
+        });
+
+        if (!res.ok) {
+
+            const err = await res.json();
+
+            status.textContent =
+                "Error: " + (err.detail || "Unknown error");
+
+            return;
+        }
+
+        const data = await res.json();
+
+        status.textContent =
+            `Project created successfully. Files: ${data.files.length}`;
+
+        fileList.innerHTML = "";
+
+        data.files.forEach(file => {
+
+            const btn = document.createElement("button");
+
+            btn.textContent = file;
+
+            btn.onclick = () => loadFile(file);
+
+            fileList.appendChild(btn);
+
+        });
+
+        if (data.files.includes("index.html")) {
+
+            document.getElementById("preview").src =
+                "/preview/index.html?t=" + Date.now();
+
+        }
+
+    } catch (error) {
+
+        console.error(error);
+
+        status.textContent =
+            "Something went wrong while building the project.";
+
+    }
+}
+
+function loadFile(filename) {
+
+    document.getElementById("preview").src =
+        "/preview/" + encodeURIComponent(filename) +
+        "?t=" + Date.now();
+
 }
 </script>
+
 </body>
 </html>

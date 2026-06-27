@@ -1,6 +1,7 @@
 import time
 import os
 import re
+import json
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -10,14 +11,21 @@ from google.genai import types
 from fastapi import FastAPI, HTTPException
 from typing import Dict
 from fastapi.responses import Response
+from openai import OpenAI
+
+
 
 load_dotenv()
 
 app = FastAPI()
 #print("DEBUG - key present:", bool(os.environ.get("GEMINI_API_KEY")))
 #print("DEBUG - key length:", len(os.environ.get("GEMINI_API_KEY", "")))
-client = genai.Client()
+#client = genai.Client()
 
+groq_client = OpenAI(
+    api_key=os.environ["GROQ_API_KEY"],
+    base_url="https://api.groq.com/openai/v1"
+)
 # In-memory storage for the current project's files (simple dict for now — real
 # session handling and persistence comes later)
 session_files: Dict[str, str] = {}
@@ -44,6 +52,44 @@ TOOL_FUNCTIONS = {
     "read_file": read_file,
     "list_files": list_files,
 }
+
+groq_tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Create or overwrite a file with the given content. Use this for every file in the project.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filename": {"type": "string", "description": "Name of the file, e.g. index.html, style.css"},
+                    "content": {"type": "string", "description": "The full content to write into the file"},
+                },
+                "required": ["filename", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read the current content of an existing file in the project",
+            "parameters": {
+                "type": "object",
+                "properties": {"filename": {"type": "string", "description": "Name of the file to read"}},
+                "required": ["filename"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": "List all filenames that currently exist in the project",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+]
 
 # ---- Tool schemas Gemini will see ----
 write_file_decl = types.FunctionDeclaration(
@@ -94,46 +140,45 @@ class BuildRequest(BaseModel):
 
 @app.post("/build")
 def build(req: BuildRequest):
-    session_files.clear()  # fresh project each time, for now
+    session_files.clear()
 
-    contents = [types.Content(role="user", parts=[types.Part.from_text(text=req.prompt)])]
+    messages = [
+        {"role": "system", "content": BUILD_SYSTEM_INSTRUCTION},
+        {"role": "user", "content": req.prompt},
+    ]
     steps_log = []
 
     for step in range(MAX_STEPS):
-        response = None
-        for attempt in range(3):
-            try:
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=BUILD_SYSTEM_INSTRUCTION,
-                        tools=[build_tool],
-                    ),
-                )
-                break
-            except Exception as e:
-                if attempt == 2:
-                    raise HTTPException(status_code=503, detail="Gemini is busy right now — please try again in a moment.")
-                time.sleep(2 ** attempt)
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            tools=groq_tools,
+        )
+        msg = response.choices[0].message
 
-        if not response.function_calls:
-            steps_log.append("Done: " + (response.text or "Build complete."))
+        if not msg.tool_calls:
+            steps_log.append("Done: " + (msg.content or "Build complete."))
             break
 
-        contents.append(response.candidates[0].content)
+        messages.append({
+            "role": "assistant",
+            "content": msg.content,
+            "tool_calls": [tc.model_dump() for tc in msg.tool_calls],
+        })
 
-        response_parts = []
-        for fc in response.function_calls:
-            func = TOOL_FUNCTIONS.get(fc.name)
-            result = func(**fc.args) if func else f"Unknown tool: {fc.name}"
-            steps_log.append(f"{fc.name}({fc.args}) -> {result}")
-            response_parts.append(types.Part.from_function_response(name=fc.name, response={"result": result}))
-
-        contents.append(types.Content(role="tool", parts=response_parts))
+        for tc in msg.tool_calls:
+            func = TOOL_FUNCTIONS.get(tc.function.name)
+            args = json.loads(tc.function.arguments)
+            result = func(**args) if func else f"Unknown tool: {tc.function.name}"
+            steps_log.append(f"{tc.function.name}({args}) -> {result}")
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": str(result),
+            })
     else:
         steps_log.append("Reached max steps without finishing.")
-
+    print("BUILD LOG:", steps_log)
     return {"files": list(session_files.keys()), "log": steps_log}
 
 @app.get("/preview/{filename:path}")
