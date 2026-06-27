@@ -1,36 +1,35 @@
+
 import time
 import os
 import re
 import json
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from fastapi import FastAPI, HTTPException
 from typing import Dict
-from fastapi.responses import Response
 from openai import OpenAI
-
-
 
 load_dotenv()
 
 app = FastAPI()
-#print("DEBUG - key present:", bool(os.environ.get("GEMINI_API_KEY")))
-#print("DEBUG - key length:", len(os.environ.get("GEMINI_API_KEY", "")))
-#client = genai.Client()
+
+client = genai.Client()
 
 groq_client = OpenAI(
     api_key=os.environ["GROQ_API_KEY"],
     base_url="https://api.groq.com/openai/v1"
 )
+
 # In-memory storage for the current project's files (simple dict for now — real
 # session handling and persistence comes later)
 session_files: Dict[str, str] = {}
 
 MAX_STEPS = 10
+MAX_FIX_ATTEMPTS = 3
 
 # ---- Tool implementations ----
 def write_file(filename: str, content: str) -> str:
@@ -91,38 +90,6 @@ groq_tools = [
     },
 ]
 
-# ---- Tool schemas Gemini will see ----
-write_file_decl = types.FunctionDeclaration(
-    name="write_file",
-    description="Create or overwrite a file with the given content. Use this for every file in the project.",
-    parameters_json_schema={
-        "type": "object",
-        "properties": {
-            "filename": {"type": "string", "description": "Name of the file, e.g. index.html, style.css, about.html"},
-            "content": {"type": "string", "description": "The full content to write into the file"},
-        },
-        "required": ["filename", "content"],
-    },
-)
-
-read_file_decl = types.FunctionDeclaration(
-    name="read_file",
-    description="Read the current content of an existing file in the project",
-    parameters_json_schema={
-        "type": "object",
-        "properties": {"filename": {"type": "string", "description": "Name of the file to read"}},
-        "required": ["filename"],
-    },
-)
-
-list_files_decl = types.FunctionDeclaration(
-    name="list_files",
-    description="List all filenames that currently exist in the project",
-    parameters_json_schema={"type": "object", "properties": {}},
-)
-
-build_tool = types.Tool(function_declarations=[write_file_decl, read_file_decl, list_files_decl])
-
 BUILD_SYSTEM_INSTRUCTION = """You are a web app building agent. Given a project description,
 build a complete multi-file website using the write_file tool.
 Rules:
@@ -131,6 +98,7 @@ Rules:
 - Use the write_file tool for every file you create — never return code as plain text
 - You may call list_files or read_file to check your previous work before finishing
 - Never use eval() or the Function() constructor
+- Avoid complex regular expressions (patterns with many backslashes); use simple methods like .includes() or .indexOf() for basic text checks instead
 - When the project is fully complete and working, respond with a short plain-text summary and STOP calling tools
 - Keep the design clean and usable
 """
@@ -138,27 +106,25 @@ Rules:
 class BuildRequest(BaseModel):
     prompt: str
 
-@app.post("/build")
-def build(req: BuildRequest):
-    session_files.clear()
+def run_agent_loop(messages, max_steps):
+    """Runs the tool-calling loop until the model stops calling tools or max_steps is hit."""
+    log = []
+    for step in range(max_steps):
+        try:
+            response = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=messages,
+                tools=groq_tools,
+            )
+        except Exception as e:
+            log.append(f"Model formatting hiccup, retrying this step: {e}")
+            continue
 
-    messages = [
-        {"role": "system", "content": BUILD_SYSTEM_INSTRUCTION},
-        {"role": "user", "content": req.prompt},
-    ]
-    steps_log = []
-
-    for step in range(MAX_STEPS):
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=messages,
-            tools=groq_tools,
-        )
         msg = response.choices[0].message
 
         if not msg.tool_calls:
-            steps_log.append("Done: " + (msg.content or "Build complete."))
-            break
+            log.append("Done: " + (msg.content or "Build complete."))
+            return log
 
         messages.append({
             "role": "assistant",
@@ -170,14 +136,66 @@ def build(req: BuildRequest):
             func = TOOL_FUNCTIONS.get(tc.function.name)
             args = json.loads(tc.function.arguments)
             result = func(**args) if func else f"Unknown tool: {tc.function.name}"
-            steps_log.append(f"{tc.function.name}({args}) -> {result}")
+            log.append(f"{tc.function.name}({args}) -> {result}")
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
                 "content": str(result),
             })
+
+    log.append("Reached max steps without finishing.")
+    return log
+
+def test_project_in_sandbox():
+    """Writes all .js files into a fresh E2B sandbox and checks their syntax with Node."""
+    from e2b_code_interpreter import Sandbox
+
+    js_files = {name: content for name, content in session_files.items() if name.endswith(".js")}
+    if not js_files:
+        return []
+
+    errors = []
+    with Sandbox.create() as sandbox:
+        for filename, content in js_files.items():
+            path = f"/home/user/{filename}"
+            sandbox.files.write(path, content)
+            try:
+                sandbox.commands.run(f"node --check {path}")
+            except Exception as e:
+                errors.append({"filename": filename, "error": str(e)})
+    return errors
+
+@app.post("/build")
+def build(req: BuildRequest):
+    session_files.clear()
+
+    messages = [
+        {"role": "system", "content": BUILD_SYSTEM_INSTRUCTION},
+        {"role": "user", "content": req.prompt},
+    ]
+
+    steps_log = run_agent_loop(messages, MAX_STEPS)
+
+    test_results = test_project_in_sandbox()
+    fix_attempts = 0
+    while test_results and fix_attempts < MAX_FIX_ATTEMPTS:
+        error_report = "\n".join(f"- {r['filename']}: {r['error']}" for r in test_results)
+        messages.append({
+            "role": "user",
+            "content": f"Testing found real errors in the generated code:\n{error_report}\nPlease fix these files using write_file."
+        })
+        steps_log.append(f"--- Fix attempt {fix_attempts + 1} ---")
+        steps_log += run_agent_loop(messages, MAX_STEPS)
+        test_results = test_project_in_sandbox()
+        fix_attempts += 1
+
+    if test_results:
+        steps_log.append(f"Remaining issues after {fix_attempts} fix attempt(s): {test_results}")
+    elif fix_attempts > 0:
+        steps_log.append("All issues resolved after self-correction.")
     else:
-        steps_log.append("Reached max steps without finishing.")
+        steps_log.append("All JavaScript files passed syntax check on the first try.")
+
     print("BUILD LOG:", steps_log)
     return {"files": list(session_files.keys()), "log": steps_log}
 
@@ -195,8 +213,6 @@ def preview(filename: str):
         media_type = "application/javascript"
     return Response(content, media_type=media_type)
 
-
-
 SYSTEM_INSTRUCTION = """You are a code generator. Given a description of a web app,
 return a SINGLE complete HTML file with inline <style> and <script> tags.
 Rules:
@@ -204,7 +220,7 @@ Rules:
 - Do NOT wrap the output in markdown code fences
 - Do NOT include any explanation or text before/after the code
 - The app must be fully functional using only vanilla HTML/CSS/JavaScript
-- NEVER use eval() or the Function() constructor for calculations or logic — 
+- NEVER use eval() or the Function() constructor for calculations or logic —
   implement arithmetic and logic explicitly using operators and conditionals
 - Make it visually clean and usable
 """
@@ -234,7 +250,7 @@ def generate(req: GenerateRequest):
             return {"code": code}
         except Exception as e:
             last_error = e
-            time.sleep(2 ** attempt)  # wait 1s, then 2s, then 4s before retrying
+            time.sleep(2 ** attempt)
 
     raise HTTPException(status_code=503, detail="Gemini is busy right now — please try again in a moment.")
 
