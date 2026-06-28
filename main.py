@@ -2,8 +2,9 @@ import time
 import os
 import re
 import json
+import io
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -12,6 +13,7 @@ from google import genai
 from google.genai import types
 from typing import Dict
 from openai import OpenAI
+from pypdf import PdfReader
 
 load_dotenv()
 
@@ -299,6 +301,7 @@ def search_adzuna_jobs(keywords, location):
             "salary_min": job.get("salary_min"),
             "salary_max": job.get("salary_max"),
             "url": job.get("redirect_url", ""),
+            "description": job.get("description", ""),
             "source": "Adzuna",
         })
     return normalized
@@ -329,6 +332,7 @@ def search_jsearch_jobs(keywords, location_text, employment_types):
             "salary_min": job.get("job_min_salary"),
             "salary_max": job.get("job_max_salary"),
             "url": job.get("job_apply_link", ""),
+            "description": job.get("job_description", ""),
             "source": "JSearch",
         })
     return normalized
@@ -383,6 +387,89 @@ Write a short, clear plain-text summary of the best matching jobs. For each, inc
         summary = f"Found {len(unique_results)} jobs, but summarization failed: {e}"
 
     return {"summary": summary, "jobs": job_summaries}
+
+# ---- Phase 6: Cover Letter Generator ----
+
+class CoverLetterRequest(BaseModel):
+    job_title: str
+    company: str
+    job_description: str
+    background: str
+
+@app.post("/cover-letter")
+def cover_letter(req: CoverLetterRequest):
+    prompt = f"""Write a professional, tailored cover letter for this job application.
+
+Job Title: {req.job_title}
+Company: {req.company}
+Job Description: {req.job_description}
+
+Candidate Background:
+{req.background}
+
+Rules:
+- Keep it concise, 3-4 paragraphs
+- Reference specific requirements from the job description where genuinely relevant
+- Professional but natural tone, not overly formal
+- Do not invent skills, experience, or claims not present in the candidate background
+- The letter MUST start with a greeting line on its own, exactly like this:
+Dear Hiring Manager,
+- The closing must be formatted as exactly two separate lines, like this:
+Best regards,
+[Candidate's name]
+- Never put the closing phrase and the name on the same line or in the same sentence
+"""
+
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        letter = response.choices[0].message.content
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Cover letter generation failed: {e}")
+
+    return {"letter": letter}
+
+@app.post("/extract-resume")
+async def extract_resume(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        pdf_reader = PdfReader(io.BytesIO(contents))
+        raw_text = ""
+        for page in pdf_reader.pages:
+            raw_text += page.extract_text() or ""
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read PDF: {e}")
+
+    if not raw_text.strip():
+        raise HTTPException(status_code=400, detail="No text could be extracted from this PDF. It might be a scanned image rather than real text.")
+
+    summary_prompt = f"""Here is raw text extracted from a resume:
+
+{raw_text[:6000]}
+
+Write a factual background summary for use in cover letter generation. You MUST include, if present in the text:
+- Exact job title(s) and years of experience
+- Specific technologies/frameworks by name (do not generalize, e.g. say "Django and FastAPI", not "backend frameworks")
+- Company name(s) worked at
+- Exact field of degree (do not rename or generalize it)
+- Any certifications mentioned
+
+Do not invent, generalize, or substitute any detail not explicitly present in the text above.
+If the text mentions a specific degree field, you must use that exact field — never substitute a different field.
+Write in third person, 5-8 sentences."""
+
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": summary_prompt}],
+        )
+        background_summary = response.choices[0].message.content
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Resume summarization failed: {e}")
+
+    return {"background": background_summary}
 
 SYSTEM_INSTRUCTION = """You are a code generator. Given a description of a web app,
 return a SINGLE complete HTML file with inline <style> and <script> tags.

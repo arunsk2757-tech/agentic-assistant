@@ -11,6 +11,7 @@ body{font-family: Arial, Helvetica, sans-serif;display:flex;height:100vh;backgro
 .panel h1{margin-bottom:20px;color:#333;}
 .panel h2{margin:20px 0 10px;color:#444;}
 textarea{width:100%;min-height:120px;padding:12px;border:1px solid #ccc;border-radius:8px;resize:vertical;font-size:14px;}
+input[type="text"]{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:14px;margin-bottom:8px;}
 select{width:100%;padding:8px;border:1px solid #ccc;border-radius:8px;font-size:14px;}
 button{margin-top:10px;padding:10px 18px;border:none;border-radius:8px;background:#2563eb;color:white;cursor:pointer;font-size:14px;}
 button:hover{background:#1d4ed8;}
@@ -19,6 +20,10 @@ button:hover{background:#1d4ed8;}
 #fileList button{margin-top:0;background:#16a34a;}
 #fileList button:hover{background:#15803d;}
 #jobResults{background:#f9fafb;border:1px solid #eee;border-radius:8px;padding:12px;white-space:pre-wrap;}
+#coverLetterResult{margin-top:10px;background:#ffffff;border:1px solid #ddd;border-radius:8px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.08);font-family:Georgia,'Times New Roman',serif;line-height:1.6;color:#222;}
+#coverLetterResult p{margin-bottom:14px;}
+#copyLetterBtn{display:none;background:#16a34a;}
+#copyLetterBtn:hover{background:#15803d;}
 .preview-container{flex:1;background:white;}
 iframe{width:100%;height:100%;border:none;}
 hr{margin:25px 0;border:none;border-top:1px solid #ddd;}
@@ -77,6 +82,32 @@ hr{margin:25px 0;border:none;border-top:1px solid #ddd;}
 <button onclick="searchJobs()">Search Jobs</button>
 
 <div id="jobResults"></div>
+
+<hr>
+
+<h2>Cover Letter Generator</h2>
+
+<label>Job Title:</label>
+<input type="text" id="clJobTitle" placeholder="e.g. Python Full Stack Developer">
+
+<label>Company:</label>
+<input type="text" id="clCompany" placeholder="e.g. Reflections Info Systems">
+
+<label>Job Description:</label><br>
+<textarea id="clJobDescription" placeholder="Paste the job description here (copy from a search result above)"></textarea>
+
+<label>Your Background:</label><br>
+
+<input type="file" id="resumeFile" accept="application/pdf">
+<button onclick="uploadResume()">Upload &amp; Analyze Resume</button>
+<div id="resumeStatus" style="margin-top:8px;color:#555;font-size:13px;"></div>
+
+<textarea id="clBackground">Python Full Stack Developer and AI Engineer with 2+ years of experience in Django, FastAPI, React.js, REST APIs, MySQL, JWT authentication, Docker, and RAG/LLM pipeline development. B.Tech in Civil Engineering with a Chartered Engineer credential. Prior experience at Xinfoz Technologies and Agrivator Technologies.</textarea>
+
+<button onclick="generateCoverLetter()">Generate Cover Letter</button>
+
+<div id="coverLetterResult"></div>
+<button id="copyLetterBtn" onclick="copyLetter()">Copy Letter</button>
 
 </div>
 <div class="preview-container">
@@ -211,6 +242,105 @@ async function searchJobs() {
         console.error(error);
         resultsBox.textContent = "Something went wrong while searching for jobs.";
     }
+}
+
+async function uploadResume() {
+    const fileInput = document.getElementById("resumeFile");
+    const status = document.getElementById("resumeStatus");
+
+    if (!fileInput.files.length) {
+        status.textContent = "Please choose a PDF file first.";
+        return;
+    }
+
+    status.textContent = "Reading and analyzing resume...";
+
+    const formData = new FormData();
+    formData.append("file", fileInput.files[0]);
+
+    try {
+        const res = await fetch("/extract-resume", {
+            method: "POST",
+            body: formData
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            status.textContent = "Error: " + (err.detail || "Unknown error");
+            return;
+        }
+
+        const data = await res.json();
+        document.getElementById("clBackground").value = data.background;
+        status.textContent = "Background updated from resume.";
+
+    } catch (error) {
+        console.error(error);
+        status.textContent = "Something went wrong while analyzing the resume.";
+    }
+}
+
+let lastCoverLetterText = "";
+
+async function generateCoverLetter() {
+    const job_title = document.getElementById("clJobTitle").value.trim();
+    const company = document.getElementById("clCompany").value.trim();
+    const job_description = document.getElementById("clJobDescription").value.trim();
+    const background = document.getElementById("clBackground").value.trim();
+    const resultBox = document.getElementById("coverLetterResult");
+    const copyBtn = document.getElementById("copyLetterBtn");
+
+    copyBtn.style.display = "none";
+
+    if (!job_title || !company || !job_description) {
+        resultBox.textContent = "Please fill in job title, company, and job description.";
+        return;
+    }
+
+    resultBox.textContent = "Generating cover letter...";
+
+    try {
+        const res = await fetch("/cover-letter", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ job_title, company, job_description, background })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            resultBox.textContent = "Error: " + (err.detail || "Unknown error");
+            return;
+        }
+
+        const data = await res.json();
+        lastCoverLetterText = data.letter;
+
+        resultBox.innerHTML = "";
+        data.letter.split(/\n\s*\n/).forEach(para => {
+            if (para.trim()) {
+                const p = document.createElement("p");
+                p.innerHTML = para.trim().replace(/\n/g, "<br>");
+                resultBox.appendChild(p);
+            }
+        });
+
+        copyBtn.style.display = "inline-block";
+        copyBtn.textContent = "Copy Letter";
+
+    } catch (error) {
+        console.error(error);
+        resultBox.textContent = "Something went wrong while generating the cover letter.";
+    }
+}
+
+function copyLetter() {
+    const copyBtn = document.getElementById("copyLetterBtn");
+    navigator.clipboard.writeText(lastCoverLetterText).then(() => {
+        copyBtn.textContent = "Copied!";
+        setTimeout(() => { copyBtn.textContent = "Copy Letter"; }, 2000);
+    }).catch(() => {
+        copyBtn.textContent = "Copy failed";
+    });
 }
 </script>
 </body>
