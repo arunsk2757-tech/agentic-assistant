@@ -109,6 +109,25 @@ hr{margin:25px 0;border:none;border-top:1px solid #ddd;}
 <div id="coverLetterResult"></div>
 <button id="copyLetterBtn" onclick="copyLetter()">Copy Letter</button>
 
+<hr>
+
+<h2>Reminders</h2>
+
+<textarea id="reminderNote" placeholder="e.g. Follow up with Reflections Info Systems"></textarea>
+
+<label>Remind me in:</label><br>
+<select id="reminderDays">
+    <option value="1">1 day</option>
+    <option value="3" selected>3 days</option>
+    <option value="7">1 week</option>
+    <option value="14">2 weeks</option>
+</select>
+<br><br>
+
+<button onclick="addReminder()">Add Reminder</button>
+
+<div id="reminderList" style="margin-top:15px;"></div>
+
 </div>
 <div class="preview-container">
 <iframe id="preview"></iframe>
@@ -342,6 +361,56 @@ function copyLetter() {
         copyBtn.textContent = "Copy failed";
     });
 }
+
+async function addReminder() {
+    const note = document.getElementById("reminderNote").value.trim();
+    const days_from_now = parseInt(document.getElementById("reminderDays").value);
+
+    if (!note) { return; }
+
+    try {
+        await fetch("/reminders", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ note, days_from_now })
+        });
+        document.getElementById("reminderNote").value = "";
+        loadReminders();
+    } catch (error) {
+        console.error(error);
+    }
+}
+
+async function loadReminders() {
+    const listBox = document.getElementById("reminderList");
+    try {
+        const res = await fetch("/reminders");
+        const data = await res.json();
+
+        if (data.reminders.length === 0) {
+            listBox.innerHTML = "<p style='color:#888;'>No reminders yet.</p>";
+            return;
+        }
+
+        listBox.innerHTML = "";
+        data.reminders.forEach(r => {
+            const isOverdue = r.due_date <= data.today;
+            const item = document.createElement("div");
+            item.style.padding = "8px";
+            item.style.marginBottom = "6px";
+            item.style.borderRadius = "6px";
+            item.style.background = isOverdue ? "#fee2e2" : "#f0fdf4";
+            item.style.color = isOverdue ? "#991b1b" : "#166534";
+            item.textContent = `${r.due_date} — ${r.note}`;
+            listBox.appendChild(item);
+        });
+    } catch (error) {
+        console.error(error);
+    }
+}
+
+loadReminders();
+
 </script>
 </body>
 </html>

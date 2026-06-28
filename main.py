@@ -14,6 +14,7 @@ from google.genai import types
 from typing import Dict
 from openai import OpenAI
 from pypdf import PdfReader
+from datetime import datetime, timedelta
 
 load_dotenv()
 
@@ -470,6 +471,30 @@ Write in third person, 5-8 sentences."""
         raise HTTPException(status_code=503, detail=f"Resume summarization failed: {e}")
 
     return {"background": background_summary}
+
+# ---- Phase 7: Reminders / Task Tracking ----
+
+from datetime import datetime, timedelta
+
+reminders = []
+
+class ReminderRequest(BaseModel):
+    note: str
+    days_from_now: int
+
+@app.post("/reminders")
+def add_reminder(req: ReminderRequest):
+    due_date = (datetime.now() + timedelta(days=req.days_from_now)).strftime("%Y-%m-%d")
+    reminders.append({"note": req.note, "due_date": due_date})
+    return {"reminders": sorted(reminders, key=lambda r: r["due_date"])}
+
+@app.get("/reminders")
+def get_reminders():
+    today = datetime.now().strftime("%Y-%m-%d")
+    return {
+        "reminders": sorted(reminders, key=lambda r: r["due_date"]),
+        "today": today,
+    }
 
 SYSTEM_INSTRUCTION = """You are a code generator. Given a description of a web app,
 return a SINGLE complete HTML file with inline <style> and <script> tags.
