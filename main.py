@@ -1,4 +1,3 @@
-
 import time
 import os
 import re
@@ -103,7 +102,21 @@ Rules:
 - Keep the design clean and usable
 """
 
+EDIT_SYSTEM_INSTRUCTION = """You are editing an existing project. Files already exist.
+Rules:
+- First call list_files to see what exists
+- Then call read_file on any file you need to change before editing it
+- Make only the specific change requested using write_file
+- Do not recreate or rewrite files you are not changing
+- Never use eval() or the Function() constructor
+- Avoid complex regular expressions; use simple methods like .includes() or .indexOf() instead
+- When the edit is complete, respond with a short plain-text summary and STOP calling tools
+"""
+
 class BuildRequest(BaseModel):
+    prompt: str
+
+class EditRequest(BaseModel):
     prompt: str
 
 def run_agent_loop(messages, max_steps):
@@ -165,15 +178,8 @@ def test_project_in_sandbox():
                 errors.append({"filename": filename, "error": str(e)})
     return errors
 
-@app.post("/build")
-def build(req: BuildRequest):
-    session_files.clear()
-
-    messages = [
-        {"role": "system", "content": BUILD_SYSTEM_INSTRUCTION},
-        {"role": "user", "content": req.prompt},
-    ]
-
+def run_build_or_edit(messages):
+    """Runs the agent loop, then tests and self-corrects, shared by /build and /edit."""
     steps_log = run_agent_loop(messages, MAX_STEPS)
 
     test_results = test_project_in_sandbox()
@@ -196,7 +202,35 @@ def build(req: BuildRequest):
     else:
         steps_log.append("All JavaScript files passed syntax check on the first try.")
 
+    return steps_log
+
+@app.post("/build")
+def build(req: BuildRequest):
+    session_files.clear()
+
+    messages = [
+        {"role": "system", "content": BUILD_SYSTEM_INSTRUCTION},
+        {"role": "user", "content": req.prompt},
+    ]
+
+    steps_log = run_build_or_edit(messages)
+
     print("BUILD LOG:", steps_log)
+    return {"files": list(session_files.keys()), "log": steps_log}
+
+@app.post("/edit")
+def edit(req: EditRequest):
+    if not session_files:
+        raise HTTPException(status_code=400, detail="No project exists yet. Build one first.")
+
+    messages = [
+        {"role": "system", "content": EDIT_SYSTEM_INSTRUCTION},
+        {"role": "user", "content": req.prompt},
+    ]
+
+    steps_log = run_build_or_edit(messages)
+
+    print("EDIT LOG:", steps_log)
     return {"files": list(session_files.keys()), "log": steps_log}
 
 @app.get("/preview/{filename:path}")
