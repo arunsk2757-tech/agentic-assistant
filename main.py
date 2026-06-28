@@ -2,6 +2,7 @@ import time
 import os
 import re
 import json
+import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
@@ -23,14 +24,11 @@ groq_client = OpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
-# In-memory storage for the current project's files (simple dict for now — real
-# session handling and persistence comes later)
 session_files: Dict[str, str] = {}
 
 MAX_STEPS = 10
 MAX_FIX_ATTEMPTS = 3
 
-# ---- Tool implementations ----
 def write_file(filename: str, content: str) -> str:
     session_files[filename] = content
     return f"Wrote {len(content)} characters to {filename}"
@@ -120,7 +118,6 @@ class EditRequest(BaseModel):
     prompt: str
 
 def run_agent_loop(messages, max_steps):
-    """Runs the tool-calling loop until the model stops calling tools or max_steps is hit."""
     log = []
     for step in range(max_steps):
         try:
@@ -160,7 +157,6 @@ def run_agent_loop(messages, max_steps):
     return log
 
 def test_project_in_sandbox():
-    """Writes all .js files into a fresh E2B sandbox and checks their syntax with Node."""
     from e2b_code_interpreter import Sandbox
 
     js_files = {name: content for name, content in session_files.items() if name.endswith(".js")}
@@ -179,7 +175,6 @@ def test_project_in_sandbox():
     return errors
 
 def run_build_or_edit(messages):
-    """Runs the agent loop, then tests and self-corrects, shared by /build and /edit."""
     steps_log = run_agent_loop(messages, MAX_STEPS)
 
     test_results = test_project_in_sandbox()
@@ -246,6 +241,148 @@ def preview(filename: str):
     elif filename.endswith(".js"):
         media_type = "application/javascript"
     return Response(content, media_type=media_type)
+
+# ---- Phase 5: Job Search Assistant (Adzuna + JSearch combined) ----
+
+ROLE_KEYWORDS = {
+    "backend": "Django FastAPI Python developer",
+    "fullstack": "React Python full stack developer",
+    "ai": "AI LLM machine learning engineer Python",
+}
+
+ADZUNA_LOCATION = {
+    "kochi": "Kochi",
+    "kerala": "Kerala",
+    "kerala_remote": "Kerala",
+    "india": "",
+}
+
+JSEARCH_LOCATION_TEXT = {
+    "kochi": "Kochi, India",
+    "kerala": "Kerala, India",
+    "kerala_remote": "Kerala, India",
+    "india": "India",
+}
+
+EMPLOYMENT_TYPES = {
+    "fulltime": "FULLTIME",
+    "fulltime_intern": "FULLTIME,INTERN",
+    "fulltime_contract": "FULLTIME,CONTRACTOR",
+}
+
+class JobSearchRequest(BaseModel):
+    location: str
+    role_type: str
+    job_type: str
+
+def search_adzuna_jobs(keywords, location):
+    url = "https://api.adzuna.com/v1/api/jobs/in/search/1"
+    params = {
+        "app_id": os.environ["ADZUNA_APP_ID"],
+        "app_key": os.environ["ADZUNA_APP_KEY"],
+        "what": keywords,
+        "where": location,
+        "results_per_page": 8,
+        "content-type": "application/json",
+    }
+    response = requests.get(url, params=params, timeout=15)
+    response.raise_for_status()
+    raw_jobs = response.json().get("results", [])
+
+    normalized = []
+    for job in raw_jobs:
+        normalized.append({
+            "id": "adzuna_" + str(job.get("id")),
+            "title": job.get("title", ""),
+            "company": (job.get("company") or {}).get("display_name", ""),
+            "location": (job.get("location") or {}).get("display_name", ""),
+            "salary_min": job.get("salary_min"),
+            "salary_max": job.get("salary_max"),
+            "url": job.get("redirect_url", ""),
+            "source": "Adzuna",
+        })
+    return normalized
+
+def search_jsearch_jobs(keywords, location_text, employment_types):
+    url = "https://jsearch.p.rapidapi.com/search-v2"
+    headers = {
+        "X-RapidAPI-Key": os.environ["RAPIDAPI_KEY"],
+        "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
+    }
+    params = {
+        "query": f"{keywords} in {location_text}",
+        "num_pages": "1",
+        "country": "in",
+        "date_posted": "all",
+    }
+    response = requests.get(url, headers=headers, params=params, timeout=20)
+    response.raise_for_status()
+    raw_jobs = response.json().get("data", {}).get("jobs", [])
+
+    normalized = []
+    for job in raw_jobs:
+        normalized.append({
+            "id": "jsearch_" + str(job.get("job_id")),
+            "title": job.get("job_title", ""),
+            "company": job.get("employer_name", ""),
+            "location": job.get("job_city") or job.get("job_country", ""),
+            "salary_min": job.get("job_min_salary"),
+            "salary_max": job.get("job_max_salary"),
+            "url": job.get("job_apply_link", ""),
+            "source": "JSearch",
+        })
+    return normalized
+
+@app.post("/jobs")
+def jobs(req: JobSearchRequest):
+    adzuna_location = ADZUNA_LOCATION.get(req.location, "")
+    jsearch_location_text = JSEARCH_LOCATION_TEXT.get(req.location, "India")
+    employment_types = EMPLOYMENT_TYPES.get(req.job_type, "FULLTIME")
+
+    if req.role_type == "all":
+        keyword_sets = list(ROLE_KEYWORDS.values())
+    else:
+        keyword_sets = [ROLE_KEYWORDS.get(req.role_type, "Python developer")]
+
+    all_results = []
+    for kw in keyword_sets:
+        try:
+            all_results.extend(search_adzuna_jobs(kw, adzuna_location))
+        except Exception as e:
+            print("Adzuna search failed for", kw, "->", e)
+
+        try:
+            all_results.extend(search_jsearch_jobs(kw, jsearch_location_text, employment_types))
+        except Exception as e:
+            print("JSearch search failed for", kw, "->", e)
+
+    if not all_results:
+        return {"summary": "No job listings found for these criteria. Try different options.", "jobs": []}
+
+    seen_ids = set()
+    unique_results = []
+    for job in all_results:
+        if job["id"] not in seen_ids:
+            seen_ids.add(job["id"])
+            unique_results.append(job)
+
+    job_summaries = unique_results[:25]
+
+    summary_prompt = f"""Here are real job listings from multiple sources:
+{json.dumps(job_summaries, indent=2)}
+
+Write a short, clear plain-text summary of the best matching jobs. For each, include title, company, location, salary if available, and the apply link. Group similar roles together. Skip irrelevant or duplicate listings."""
+
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": summary_prompt}],
+        )
+        summary = response.choices[0].message.content
+    except Exception as e:
+        summary = f"Found {len(unique_results)} jobs, but summarization failed: {e}"
+
+    return {"summary": summary, "jobs": job_summaries}
 
 SYSTEM_INSTRUCTION = """You are a code generator. Given a description of a web app,
 return a SINGLE complete HTML file with inline <style> and <script> tags.
