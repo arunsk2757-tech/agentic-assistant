@@ -3,136 +3,253 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI App Builder</title>
+<title>Agent Bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
 <style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root{
+  --ink:#1B1B17;
+  --paper:#FAF9F6;
+  --card:#FFFFFF;
+  --hairline:#E4E1DA;
+  --muted:#7A766D;
+  --teal:#0E6E62;
+  --amber:#B8651B;
+  --violet:#5B3B8C;
+  --brick:#9C3D32;
+  --indigo:#2C4A8C;
+}
+
 *{margin:0;padding:0;box-sizing:border-box;}
-body{font-family: Arial, Helvetica, sans-serif;display:flex;height:100vh;background:#f5f7fa;}
-.panel{width:35%;min-width:350px;padding:20px;overflow-y:auto;background:white;border-right:1px solid #ddd;}
-.panel h1{margin-bottom:20px;color:#333;}
-.panel h2{margin:20px 0 10px;color:#444;}
-textarea{width:100%;min-height:120px;padding:12px;border:1px solid #ccc;border-radius:8px;resize:vertical;font-size:14px;}
-input[type="text"]{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:14px;margin-bottom:8px;}
-select{width:100%;padding:8px;border:1px solid #ccc;border-radius:8px;font-size:14px;}
-button{margin-top:10px;padding:10px 18px;border:none;border-radius:8px;background:#2563eb;color:white;cursor:pointer;font-size:14px;}
-button:hover{background:#1d4ed8;}
-#status,#buildStatus,#editStatus,#jobResults{margin-top:10px;color:#555;font-size:14px;}
-#fileList{margin-top:15px;display:flex;flex-wrap:wrap;gap:8px;}
-#fileList button{margin-top:0;background:#16a34a;}
-#fileList button:hover{background:#15803d;}
-#jobResults{background:#f9fafb;border:1px solid #eee;border-radius:8px;padding:12px;white-space:pre-wrap;}
-#coverLetterResult{margin-top:10px;background:#ffffff;border:1px solid #ddd;border-radius:8px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.08);font-family:Georgia,'Times New Roman',serif;line-height:1.6;color:#222;}
-#coverLetterResult p{margin-bottom:14px;}
-#copyLetterBtn{display:none;background:#16a34a;}
-#copyLetterBtn:hover{background:#15803d;}
-.preview-container{flex:1;background:white;}
-iframe{width:100%;height:100%;border:none;}
-hr{margin:25px 0;border:none;border-top:1px solid #ddd;}
-@media(max-width:768px){body{flex-direction:column;}.panel{width:100%;min-width:unset;height:auto;}.preview-container{width:100%;height:50vh;}}
+html,body{height:100%;}
+body{font-family:'IBM Plex Sans', sans-serif;background:var(--paper);color:var(--ink);}
+
+.app{display:flex;height:100vh;overflow:hidden;}
+
+/* ---- Tab rail ---- */
+.tab-rail{width:84px;background:var(--ink);flex-shrink:0;display:flex;flex-direction:column;align-items:center;padding:18px 0;gap:4px;}
+.brand{color:#FAF9F6;font-family:'IBM Plex Mono', monospace;font-size:10px;letter-spacing:0.12em;text-align:center;margin-bottom:28px;opacity:0.7;}
+.tab-btn{width:68px;border:none;background:transparent;color:#9A958A;font-family:'IBM Plex Mono', monospace;font-size:10.5px;font-weight:600;letter-spacing:0.04em;cursor:pointer;border-radius:8px;padding:10px 4px;display:flex;flex-direction:column;align-items:center;gap:5px;transition:background 0.15s ease, color 0.15s ease;}
+.tab-btn:hover{background:rgba(255,255,255,0.06);color:#E5E1D8;}
+.tab-btn.active{background:rgba(255,255,255,0.10);color:#FFFFFF;}
+.tab-btn .dot{width:7px;height:7px;border-radius:50%;display:block;}
+.tab-btn .idx{font-size:9px;opacity:0.55;}
+
+/* ---- Tool panel ---- */
+.tool-panel{width:420px;flex-shrink:0;background:var(--card);border-right:1px solid var(--hairline);overflow-y:auto;padding:28px 26px 60px;}
+.pane-header{margin-bottom:22px;padding-bottom:16px;border-bottom:1px solid var(--hairline);}
+.tag-label{display:inline-block;font-family:'IBM Plex Mono', monospace;font-size:11px;font-weight:600;letter-spacing:0.08em;color:var(--tag, var(--teal));border:1px solid var(--tag, var(--teal));border-radius:4px;padding:2px 7px;margin-bottom:10px;}
+.pane-header h1{font-size:21px;font-weight:700;letter-spacing:-0.01em;margin-bottom:6px;}
+.pane-header .sub{font-size:13px;color:var(--muted);line-height:1.5;}
+
+.field-block{margin-bottom:26px;}
+.field-label{display:block;font-family:'IBM Plex Mono', monospace;font-size:10.5px;font-weight:600;letter-spacing:0.07em;color:var(--muted);text-transform:uppercase;margin:14px 0 6px;}
+.field-block textarea,.field-block input[type="text"],.field-block select{width:100%;font-family:'IBM Plex Sans', sans-serif;font-size:13.5px;padding:10px 12px;border:1px solid var(--hairline);border-radius:6px;background:#fff;color:var(--ink);}
+.field-block textarea{min-height:90px;resize:vertical;}
+.field-block textarea:focus,.field-block input:focus,.field-block select:focus{outline:2px solid var(--teal);outline-offset:1px;border-color:transparent;}
+input[type="file"]{font-size:12px;font-family:'IBM Plex Sans', sans-serif;}
+.resume-row{display:flex;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap;}
+
+.btn{display:inline-block;margin-top:12px;padding:9px 18px;border:none;border-radius:6px;background:var(--btn-color, var(--teal));color:#fff;font-family:'IBM Plex Sans', sans-serif;font-size:13.5px;font-weight:600;cursor:pointer;transition:opacity 0.15s ease;}
+.btn:hover{opacity:0.85;}
+.btn-ghost{display:inline-block;margin-top:8px;padding:7px 14px;border:1px solid var(--hairline);border-radius:6px;background:#fff;color:var(--ink);font-family:'IBM Plex Mono', monospace;font-size:11.5px;font-weight:600;cursor:pointer;}
+.btn-ghost:hover{background:var(--paper);}
+#copyLetterBtn{display:none;}
+
+.status-line{margin-top:8px;font-size:12.5px;color:var(--muted);}
+.status-line.small{font-size:11.5px;}
+
+#fileList{margin-top:12px;display:flex;flex-wrap:wrap;gap:6px;}
+#fileList button{font-family:'IBM Plex Mono', monospace;font-size:11px;padding:4px 9px;border-radius:4px;border:1px solid var(--hairline);background:var(--paper);color:var(--ink);cursor:pointer;}
+#fileList button:hover{background:var(--teal);color:#fff;border-color:var(--teal);}
+
+#jobResults{margin-top:14px;padding:14px;border:1px solid var(--hairline);border-radius:8px;background:var(--paper);font-size:13px;line-height:1.55;white-space:pre-wrap;}
+
+#coverLetterResult{margin-top:14px;padding:26px;border:1px solid var(--hairline);border-radius:8px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.05);font-family:'IBM Plex Sans', sans-serif;font-size:14px;line-height:1.65;}
+#coverLetterResult p{margin-bottom:13px;}
+
+#reminderList{margin-top:14px;}
+
+/* ---- Preview ---- */
+.preview-container{flex:1;background:#fff;display:flex;flex-direction:column;}
+.preview-bar{font-family:'IBM Plex Mono', monospace;font-size:10.5px;font-weight:600;letter-spacing:0.1em;color:var(--muted);padding:10px 16px;border-bottom:1px solid var(--hairline);flex-shrink:0;}
+iframe{flex:1;width:100%;border:none;}
+
+@media(max-width:900px){
+  .app{flex-direction:column;height:auto;overflow:visible;}
+  .tab-rail{width:100%;flex-direction:row;justify-content:center;flex-wrap:wrap;}
+  .tool-panel{width:100%;}
+  .preview-container{height:60vh;}
+}
 </style>
 </head>
 <body>
-<div class="panel">
-<h1>AI App Builder</h1>
-<h2>Single File App</h2>
-<textarea id="prompt" placeholder="Example: Build a modern todo list app with dark mode"></textarea>
-<button onclick="generateApp()">Generate App</button>
-<div id="status"></div>
-<hr>
-<h2>Multi-File Project Builder</h2>
-<textarea id="buildPrompt" placeholder="Example: Build a portfolio website with Home, About, Projects and Contact pages"></textarea>
-<button onclick="buildProject()">Build Project</button>
-<div id="buildStatus"></div>
-<div id="fileList"></div>
-<hr>
-<h2>Edit this project</h2>
-<textarea id="editPrompt" placeholder="e.g. change the navbar color to blue"></textarea>
-<button onclick="editProject()">Apply Edit</button>
-<div id="editStatus"></div>
+<div class="app">
 
-<hr>
+  <nav class="tab-rail">
+    <div class="brand">AGENT<br>BENCH</div>
+    <button class="tab-btn active" data-tool="build" onclick="showTool('build')">
+      <span class="dot" style="background:var(--teal)"></span>
+      <span class="idx">01</span>
+      <span>BUILD</span>
+    </button>
+    <button class="tab-btn" data-tool="edit" onclick="showTool('edit')">
+      <span class="dot" style="background:var(--amber)"></span>
+      <span class="idx">02</span>
+      <span>EDIT</span>
+    </button>
+    <button class="tab-btn" data-tool="jobs" onclick="showTool('jobs')">
+      <span class="dot" style="background:var(--violet)"></span>
+      <span class="idx">03</span>
+      <span>JOBS</span>
+    </button>
+    <button class="tab-btn" data-tool="letters" onclick="showTool('letters')">
+      <span class="dot" style="background:var(--brick)"></span>
+      <span class="idx">04</span>
+      <span>LETTERS</span>
+    </button>
+    <button class="tab-btn" data-tool="reminders" onclick="showTool('reminders')">
+      <span class="dot" style="background:var(--indigo)"></span>
+      <span class="idx">05</span>
+      <span>REMIND</span>
+    </button>
+  </nav>
 
-<h2>Job Search Assistant</h2>
+  <div class="tool-panel">
 
-<label>Location:</label><br>
-<select id="jobLocation">
-    <option value="kochi">Kochi only</option>
-    <option value="kerala">Anywhere in Kerala</option>
-    <option value="kerala_remote">Kerala + Remote</option>
-    <option value="india" selected>Anywhere in India</option>
-</select>
-<br><br>
+    <div class="tool-pane" id="pane-build" style="display:block;">
+      <div class="pane-header" style="--tag:var(--teal)">
+        <span class="tag-label">01 / BUILD</span>
+        <h1>Build a project</h1>
+        <p class="sub">Describe a single-file app or a full multi-file site. The agent writes the code and tests it.</p>
+      </div>
 
-<label>Role type:</label><br>
-<select id="jobRoleType">
-    <option value="backend">Django/FastAPI backend</option>
-    <option value="fullstack">Full-stack (React + Python)</option>
-    <option value="ai">AI/LLM engineering</option>
-    <option value="all" selected>All of the above</option>
-</select>
-<br><br>
+      <div class="field-block">
+        <label class="field-label">Single file app</label>
+        <textarea id="prompt" placeholder="Example: Build a modern todo list app with dark mode"></textarea>
+        <button class="btn" style="--btn-color:var(--teal)" onclick="generateApp()">Generate App</button>
+        <div id="status" class="status-line"></div>
+      </div>
 
-<label>Job type:</label><br>
-<select id="jobType">
-    <option value="fulltime">Full-time only</option>
-    <option value="fulltime_intern">Full-time + Internships</option>
-    <option value="fulltime_contract" selected>Full-time + Contract/Freelance</option>
-</select>
-<br><br>
+      <div class="field-block">
+        <label class="field-label">Multi-file project</label>
+        <textarea id="buildPrompt" placeholder="Example: Build a portfolio website with Home, About, Projects and Contact pages"></textarea>
+        <button class="btn" style="--btn-color:var(--teal)" onclick="buildProject()">Build Project</button>
+        <div id="buildStatus" class="status-line"></div>
+        <div id="fileList"></div>
+      </div>
+    </div>
 
-<button onclick="searchJobs()">Search Jobs</button>
+    <div class="tool-pane" id="pane-edit" style="display:none;">
+      <div class="pane-header" style="--tag:var(--amber)">
+        <span class="tag-label">02 / EDIT</span>
+        <h1>Edit the current project</h1>
+        <p class="sub">Describe a targeted change. The agent reads the relevant file first, then edits only what's needed.</p>
+      </div>
+      <div class="field-block">
+        <label class="field-label">Edit instruction</label>
+        <textarea id="editPrompt" placeholder="e.g. change the navbar color to blue"></textarea>
+        <button class="btn" style="--btn-color:var(--amber)" onclick="editProject()">Apply Edit</button>
+        <div id="editStatus" class="status-line"></div>
+      </div>
+    </div>
 
-<div id="jobResults"></div>
+    <div class="tool-pane" id="pane-jobs" style="display:none;">
+      <div class="pane-header" style="--tag:var(--violet)">
+        <span class="tag-label">03 / JOBS</span>
+        <h1>Job Search Assistant</h1>
+        <p class="sub">Searches live listings across multiple sources and summarizes the best matches.</p>
+      </div>
+      <div class="field-block">
+        <label class="field-label">Location</label>
+        <select id="jobLocation">
+            <option value="kochi">Kochi only</option>
+            <option value="kerala">Anywhere in Kerala</option>
+            <option value="kerala_remote">Kerala + Remote</option>
+            <option value="india" selected>Anywhere in India</option>
+        </select>
+        <label class="field-label">Role type</label>
+        <select id="jobRoleType">
+            <option value="backend">Django/FastAPI backend</option>
+            <option value="fullstack">Full-stack (React + Python)</option>
+            <option value="ai">AI/LLM engineering</option>
+            <option value="all" selected>All of the above</option>
+        </select>
+        <label class="field-label">Job type</label>
+        <select id="jobType">
+            <option value="fulltime">Full-time only</option>
+            <option value="fulltime_intern">Full-time + Internships</option>
+            <option value="fulltime_contract" selected>Full-time + Contract/Freelance</option>
+        </select>
+        <button class="btn" style="--btn-color:var(--violet)" onclick="searchJobs()">Search Jobs</button>
+        <div id="jobResults"></div>
+      </div>
+    </div>
 
-<hr>
+    <div class="tool-pane" id="pane-letters" style="display:none;">
+      <div class="pane-header" style="--tag:var(--brick)">
+        <span class="tag-label">04 / LETTERS</span>
+        <h1>Cover Letter Generator</h1>
+        <p class="sub">Upload a resume once, then generate a tailored letter for any job description.</p>
+      </div>
+      <div class="field-block">
+        <label class="field-label">Job title</label>
+        <input type="text" id="clJobTitle" placeholder="e.g. Python Full Stack Developer">
+        <label class="field-label">Company</label>
+        <input type="text" id="clCompany" placeholder="e.g. Reflections Info Systems">
+        <label class="field-label">Job description</label>
+        <textarea id="clJobDescription" placeholder="Paste the job description here"></textarea>
+        <label class="field-label">Your background</label>
+        <div class="resume-row">
+          <input type="file" id="resumeFile" accept="application/pdf">
+          <button class="btn-ghost" onclick="uploadResume()">Analyze Resume</button>
+        </div>
+        <div id="resumeStatus" class="status-line small"></div>
+        <textarea id="clBackground">Python Full Stack Developer and AI Engineer with 2+ years of experience in Django, FastAPI, React.js, REST APIs, MySQL, JWT authentication, Docker, and RAG/LLM pipeline development. B.Tech in Civil Engineering with a Chartered Engineer credential. Prior experience at Xinfoz Technologies and Agrivator Technologies.</textarea>
+        <button class="btn" style="--btn-color:var(--brick)" onclick="generateCoverLetter()">Generate Cover Letter</button>
+        <div id="coverLetterResult"></div>
+        <button id="copyLetterBtn" class="btn-ghost" onclick="copyLetter()">Copy Letter</button>
+      </div>
+    </div>
 
-<h2>Cover Letter Generator</h2>
+    <div class="tool-pane" id="pane-reminders" style="display:none;">
+      <div class="pane-header" style="--tag:var(--indigo)">
+        <span class="tag-label">05 / REMIND</span>
+        <h1>Reminders</h1>
+        <p class="sub">Track follow-ups so nothing slips through during a job search.</p>
+      </div>
+      <div class="field-block">
+        <label class="field-label">Note</label>
+        <textarea id="reminderNote" placeholder="e.g. Follow up with Reflections Info Systems"></textarea>
+        <label class="field-label">Remind me in</label>
+        <select id="reminderDays">
+            <option value="1">1 day</option>
+            <option value="3" selected>3 days</option>
+            <option value="7">1 week</option>
+            <option value="14">2 weeks</option>
+        </select>
+        <button class="btn" style="--btn-color:var(--indigo)" onclick="addReminder()">Add Reminder</button>
+        <div id="reminderList"></div>
+      </div>
+    </div>
 
-<label>Job Title:</label>
-<input type="text" id="clJobTitle" placeholder="e.g. Python Full Stack Developer">
+  </div>
 
-<label>Company:</label>
-<input type="text" id="clCompany" placeholder="e.g. Reflections Info Systems">
+  <div class="preview-container">
+    <div class="preview-bar">LIVE PREVIEW</div>
+    <iframe id="preview"></iframe>
+  </div>
 
-<label>Job Description:</label><br>
-<textarea id="clJobDescription" placeholder="Paste the job description here (copy from a search result above)"></textarea>
-
-<label>Your Background:</label><br>
-
-<input type="file" id="resumeFile" accept="application/pdf">
-<button onclick="uploadResume()">Upload &amp; Analyze Resume</button>
-<div id="resumeStatus" style="margin-top:8px;color:#555;font-size:13px;"></div>
-
-<textarea id="clBackground">Python Full Stack Developer and AI Engineer with 2+ years of experience in Django, FastAPI, React.js, REST APIs, MySQL, JWT authentication, Docker, and RAG/LLM pipeline development. B.Tech in Civil Engineering with a Chartered Engineer credential. Prior experience at Xinfoz Technologies and Agrivator Technologies.</textarea>
-
-<button onclick="generateCoverLetter()">Generate Cover Letter</button>
-
-<div id="coverLetterResult"></div>
-<button id="copyLetterBtn" onclick="copyLetter()">Copy Letter</button>
-
-<hr>
-
-<h2>Reminders</h2>
-
-<textarea id="reminderNote" placeholder="e.g. Follow up with Reflections Info Systems"></textarea>
-
-<label>Remind me in:</label><br>
-<select id="reminderDays">
-    <option value="1">1 day</option>
-    <option value="3" selected>3 days</option>
-    <option value="7">1 week</option>
-    <option value="14">2 weeks</option>
-</select>
-<br><br>
-
-<button onclick="addReminder()">Add Reminder</button>
-
-<div id="reminderList" style="margin-top:15px;"></div>
-
-</div>
-<div class="preview-container">
-<iframe id="preview"></iframe>
 </div>
 <script>
+function showTool(name){
+    document.querySelectorAll('.tool-pane').forEach(function(p){ p.style.display = 'none'; });
+    document.getElementById('pane-' + name).style.display = 'block';
+    document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
+    document.querySelector('.tab-btn[data-tool="' + name + '"]').classList.add('active');
+}
+
 async function generateApp() {
     const prompt = document.getElementById("prompt").value.trim();
     const status = document.getElementById("status");
@@ -388,7 +505,7 @@ async function loadReminders() {
         const data = await res.json();
 
         if (data.reminders.length === 0) {
-            listBox.innerHTML = "<p style='color:#888;'>No reminders yet.</p>";
+            listBox.innerHTML = "<p style='color:#7A766D;font-size:13px;'>No reminders yet.</p>";
             return;
         }
 
@@ -396,11 +513,13 @@ async function loadReminders() {
         data.reminders.forEach(r => {
             const isOverdue = r.due_date <= data.today;
             const item = document.createElement("div");
-            item.style.padding = "8px";
-            item.style.marginBottom = "6px";
+            item.style.padding = "9px 12px";
+            item.style.marginBottom = "7px";
             item.style.borderRadius = "6px";
-            item.style.background = isOverdue ? "#fee2e2" : "#f0fdf4";
-            item.style.color = isOverdue ? "#991b1b" : "#166534";
+            item.style.fontSize = "13px";
+            item.style.fontFamily = "'IBM Plex Mono', monospace";
+            item.style.background = isOverdue ? "#FBEAE7" : "#E8F2EF";
+            item.style.color = isOverdue ? "#8C2F22" : "#0E6E62";
             item.textContent = `${r.due_date} — ${r.note}`;
             listBox.appendChild(item);
         });
@@ -410,7 +529,6 @@ async function loadReminders() {
 }
 
 loadReminders();
-
 </script>
 </body>
 </html>
