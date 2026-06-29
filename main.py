@@ -3,7 +3,10 @@ import os
 import re
 import json
 import io
+import sqlite3
 import requests
+from datetime import datetime, timedelta
+from typing import Dict, Optional
 from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response
@@ -11,10 +14,8 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from typing import Dict
 from openai import OpenAI
 from pypdf import PdfReader
-from datetime import datetime, timedelta
 
 load_dotenv()
 
@@ -27,24 +28,75 @@ groq_client = OpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
-session_files: Dict[str, str] = {}
+# ---- Persistence (SQLite, now with multi-project support) ----
 
-MAX_STEPS = 10
-MAX_FIX_ATTEMPTS = 3
+DB_PATH = "agent_bench.db"
+
+current_project = "default"
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS files (
+            project TEXT,
+            filename TEXT,
+            content TEXT,
+            PRIMARY KEY (project, filename)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS reminders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note TEXT,
+            due_date TEXT
+        )
+    """)
+    return conn
+
+def clear_files():
+    conn = get_db()
+    conn.execute("DELETE FROM files WHERE project = ?", (current_project,))
+    conn.commit()
+    conn.close()
+
+def get_all_files() -> dict:
+    conn = get_db()
+    rows = conn.execute("SELECT filename, content FROM files WHERE project = ?", (current_project,)).fetchall()
+    conn.close()
+    return {row[0]: row[1] for row in rows}
+
+def get_file_content(filename: str):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT content FROM files WHERE project = ? AND filename = ?",
+        (current_project, filename)
+    ).fetchone()
+    conn.close()
+    return row[0] if row else None
+
+# ---- Tool implementations (scoped to current_project automatically) ----
 
 def write_file(filename: str, content: str) -> str:
-    session_files[filename] = content
+    conn = get_db()
+    conn.execute(
+        "INSERT OR REPLACE INTO files (project, filename, content) VALUES (?, ?, ?)",
+        (current_project, filename, content)
+    )
+    conn.commit()
+    conn.close()
     return f"Wrote {len(content)} characters to {filename}"
 
 def read_file(filename: str) -> str:
-    if filename not in session_files:
+    content = get_file_content(filename)
+    if content is None:
         return f"Error: {filename} does not exist"
-    return session_files[filename]
+    return content
 
 def list_files() -> str:
-    if not session_files:
+    files = get_all_files()
+    if not files:
         return "No files yet"
-    return ", ".join(session_files.keys())
+    return ", ".join(files.keys())
 
 TOOL_FUNCTIONS = {
     "write_file": write_file,
@@ -116,6 +168,7 @@ Rules:
 
 class BuildRequest(BaseModel):
     prompt: str
+    project: Optional[str] = None
 
 class EditRequest(BaseModel):
     prompt: str
@@ -147,7 +200,7 @@ def run_agent_loop(messages, max_steps):
 
         for tc in msg.tool_calls:
             func = TOOL_FUNCTIONS.get(tc.function.name)
-            args = json.loads(tc.function.arguments)
+            args = json.loads(tc.function.arguments) or {}
             result = func(**args) if func else f"Unknown tool: {tc.function.name}"
             log.append(f"{tc.function.name}({args}) -> {result}")
             messages.append({
@@ -162,7 +215,8 @@ def run_agent_loop(messages, max_steps):
 def test_project_in_sandbox():
     from e2b_code_interpreter import Sandbox
 
-    js_files = {name: content for name, content in session_files.items() if name.endswith(".js")}
+    files = get_all_files()
+    js_files = {name: content for name, content in files.items() if name.endswith(".js")}
     if not js_files:
         return []
 
@@ -202,9 +256,16 @@ def run_build_or_edit(messages):
 
     return steps_log
 
+MAX_STEPS = 10
+MAX_FIX_ATTEMPTS = 3
+
 @app.post("/build")
 def build(req: BuildRequest):
-    session_files.clear()
+    global current_project
+    if req.project:
+        current_project = req.project.strip()
+
+    clear_files()
 
     messages = [
         {"role": "system", "content": BUILD_SYSTEM_INSTRUCTION},
@@ -214,11 +275,11 @@ def build(req: BuildRequest):
     steps_log = run_build_or_edit(messages)
 
     print("BUILD LOG:", steps_log)
-    return {"files": list(session_files.keys()), "log": steps_log}
+    return {"files": list(get_all_files().keys()), "project": current_project, "log": steps_log}
 
 @app.post("/edit")
 def edit(req: EditRequest):
-    if not session_files:
+    if not get_all_files():
         raise HTTPException(status_code=400, detail="No project exists yet. Build one first.")
 
     messages = [
@@ -229,13 +290,13 @@ def edit(req: EditRequest):
     steps_log = run_build_or_edit(messages)
 
     print("EDIT LOG:", steps_log)
-    return {"files": list(session_files.keys()), "log": steps_log}
+    return {"files": list(get_all_files().keys()), "log": steps_log}
 
 @app.get("/preview/{filename:path}")
 def preview(filename: str):
-    if filename not in session_files:
+    content = get_file_content(filename)
+    if content is None:
         return Response("Not found", status_code=404)
-    content = session_files[filename]
     media_type = "text/plain"
     if filename.endswith(".html"):
         media_type = "text/html"
@@ -244,6 +305,33 @@ def preview(filename: str):
     elif filename.endswith(".js"):
         media_type = "application/javascript"
     return Response(content, media_type=media_type)
+
+@app.get("/files")
+def list_existing_files():
+    return {"files": list(get_all_files().keys()), "project": current_project}
+
+# ---- Project management ----
+
+class ProjectSwitchRequest(BaseModel):
+    project: str
+
+@app.get("/projects")
+def list_projects():
+    conn = get_db()
+    rows = conn.execute("SELECT DISTINCT project FROM files ORDER BY project").fetchall()
+    conn.close()
+    projects = {row[0] for row in rows}
+    projects.add(current_project)
+    return {"projects": sorted(projects), "current": current_project}
+
+@app.post("/projects/switch")
+def switch_project(req: ProjectSwitchRequest):
+    global current_project
+    name = req.project.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Project name cannot be empty.")
+    current_project = name
+    return {"current": current_project, "files": list(get_all_files().keys())}
 
 # ---- Phase 5: Job Search Assistant (Adzuna + JSearch combined) ----
 
@@ -450,16 +538,10 @@ async def extract_resume(file: UploadFile = File(...)):
 
 {raw_text[:6000]}
 
-Write a factual background summary for use in cover letter generation. You MUST include, if present in the text:
-- Exact job title(s) and years of experience
-- Specific technologies/frameworks by name (do not generalize, e.g. say "Django and FastAPI", not "backend frameworks")
-- Company name(s) worked at
-- Exact field of degree (do not rename or generalize it)
-- Any certifications mentioned
-
-Do not invent, generalize, or substitute any detail not explicitly present in the text above.
-If the text mentions a specific degree field, you must use that exact field — never substitute a different field.
-Write in third person, 5-8 sentences."""
+Write a concise, professional background summary (3-5 sentences) describing this candidate's
+role/title, years of experience, key technical skills, and education.
+Write in third person, factual only — do not invent any information not present in the text above.
+This summary will be used as input for generating cover letters, so keep it general enough to apply to multiple job applications."""
 
     try:
         response = groq_client.chat.completions.create(
@@ -474,25 +556,30 @@ Write in third person, 5-8 sentences."""
 
 # ---- Phase 7: Reminders / Task Tracking ----
 
-from datetime import datetime, timedelta
-
-reminders = []
-
 class ReminderRequest(BaseModel):
     note: str
     days_from_now: int
 
+def get_reminders_db() -> list:
+    conn = get_db()
+    rows = conn.execute("SELECT note, due_date FROM reminders ORDER BY due_date ASC").fetchall()
+    conn.close()
+    return [{"note": row[0], "due_date": row[1]} for row in rows]
+
 @app.post("/reminders")
 def add_reminder(req: ReminderRequest):
     due_date = (datetime.now() + timedelta(days=req.days_from_now)).strftime("%Y-%m-%d")
-    reminders.append({"note": req.note, "due_date": due_date})
-    return {"reminders": sorted(reminders, key=lambda r: r["due_date"])}
+    conn = get_db()
+    conn.execute("INSERT INTO reminders (note, due_date) VALUES (?, ?)", (req.note, due_date))
+    conn.commit()
+    conn.close()
+    return {"reminders": get_reminders_db()}
 
 @app.get("/reminders")
 def get_reminders():
     today = datetime.now().strftime("%Y-%m-%d")
     return {
-        "reminders": sorted(reminders, key=lambda r: r["due_date"]),
+        "reminders": get_reminders_db(),
         "today": today,
     }
 

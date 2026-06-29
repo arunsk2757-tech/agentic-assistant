@@ -126,6 +126,14 @@ iframe{flex:1;width:100%;border:none;}
       </div>
 
       <div class="field-block">
+        <label class="field-label">Project</label>
+        <select id="projectSelector" onchange="handleProjectSelect()">
+            <option value="__new__">+ New project...</option>
+        </select>
+        <input type="text" id="newProjectName" placeholder="Name your new project" style="display:none; margin-top:8px;">
+      </div>
+
+      <div class="field-block">
         <label class="field-label">Single file app</label>
         <textarea id="prompt" placeholder="Example: Build a modern todo list app with dark mode"></textarea>
         <button class="btn" style="--btn-color:var(--teal)" onclick="generateApp()">Generate App</button>
@@ -275,18 +283,88 @@ async function generateApp() {
     }
 }
 
+async function loadProjects() {
+    try {
+        const res = await fetch("/projects");
+        const data = await res.json();
+        const selector = document.getElementById("projectSelector");
+        selector.innerHTML = '<option value="__new__">+ New project...</option>';
+        data.projects.forEach(p => {
+            const opt = document.createElement("option");
+            opt.value = p;
+            opt.textContent = p;
+            if (p === data.current) opt.selected = true;
+            selector.appendChild(opt);
+        });
+    } catch (error) {
+        console.error(error);
+    }
+}
+
+function handleProjectSelect() {
+    const selector = document.getElementById("projectSelector");
+    const newNameInput = document.getElementById("newProjectName");
+    if (selector.value === "__new__") {
+        newNameInput.style.display = "block";
+    } else {
+        newNameInput.style.display = "none";
+        switchProject(selector.value);
+    }
+}
+
+async function switchProject(name) {
+    try {
+        const res = await fetch("/projects/switch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ project: name })
+        });
+        const data = await res.json();
+        const fileList = document.getElementById("fileList");
+        fileList.innerHTML = "";
+        data.files.forEach(file => {
+            const btn = document.createElement("button");
+            btn.textContent = file;
+            btn.onclick = () => loadFile(file);
+            fileList.appendChild(btn);
+        });
+        if (data.files.includes("index.html")) {
+            document.getElementById("preview").src = "/preview/index.html?t=" + Date.now();
+        } else {
+            document.getElementById("preview").src = "about:blank";
+        }
+    } catch (error) {
+        console.error(error);
+    }
+}
+
 async function buildProject() {
     const prompt = document.getElementById("buildPrompt").value.trim();
     const status = document.getElementById("buildStatus");
     const fileList = document.getElementById("fileList");
+    const projectSelector = document.getElementById("projectSelector");
+    const newNameInput = document.getElementById("newProjectName");
+
+    let projectName = null;
+    if (projectSelector.value === "__new__") {
+        projectName = newNameInput.value.trim();
+        if (!projectName) {
+            status.textContent = "Please enter a name for the new project.";
+            return;
+        }
+    }
+
     if (!prompt) { status.textContent = "Please enter a project description."; return; }
     status.textContent = "Building project... this may take a few moments.";
     fileList.innerHTML = "";
     try {
+        const body = { prompt };
+        if (projectName) body.project = projectName;
+
         const res = await fetch("/build", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt })
+            body: JSON.stringify(body)
         });
         if (!res.ok) {
             const err = await res.json();
@@ -305,6 +383,9 @@ async function buildProject() {
         if (data.files.includes("index.html")) {
             document.getElementById("preview").src = "/preview/index.html?t=" + Date.now();
         }
+        newNameInput.value = "";
+        newNameInput.style.display = "none";
+        await loadProjects();
     } catch (error) {
         console.error(error);
         status.textContent = "Something went wrong while building the project.";
@@ -528,6 +609,7 @@ async function loadReminders() {
     }
 }
 
+loadProjects();
 loadReminders();
 </script>
 </body>
