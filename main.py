@@ -28,7 +28,7 @@ groq_client = OpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
-# ---- Persistence (SQLite, now with multi-project support) ----
+# ---- Persistence (SQLite, with multi-project support) ----
 
 DB_PATH = "agent_bench.db"
 
@@ -310,6 +310,22 @@ def preview(filename: str):
 def list_existing_files():
     return {"files": list(get_all_files().keys()), "project": current_project}
 
+class FileEditRequest(BaseModel):
+    filename: str
+    content: str
+
+@app.get("/file/{filename}")
+def get_single_file(filename: str):
+    content = get_file_content(filename)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"{filename} not found in current project.")
+    return {"filename": filename, "content": content}
+
+@app.post("/file")
+def save_single_file(req: FileEditRequest):
+    write_file(req.filename, req.content)
+    return {"filename": req.filename, "saved": True}
+
 # ---- Project management ----
 
 class ProjectSwitchRequest(BaseModel):
@@ -333,7 +349,7 @@ def switch_project(req: ProjectSwitchRequest):
     current_project = name
     return {"current": current_project, "files": list(get_all_files().keys())}
 
-# ---- Phase 5: Job Search Assistant (Adzuna + JSearch combined) ----
+# ---- Phase 5/9: Job Search Assistant (Adzuna + JSearch, custom location/role, experience filter) ----
 
 ROLE_KEYWORDS = {
     "backend": "Django FastAPI Python developer",
@@ -343,15 +359,27 @@ ROLE_KEYWORDS = {
 
 ADZUNA_LOCATION = {
     "kochi": "Kochi",
+    "trivandrum": "Thiruvananthapuram",
+    "kozhikode": "Kozhikode",
     "kerala": "Kerala",
     "kerala_remote": "Kerala",
+    "bangalore": "Bangalore",
+    "hyderabad": "Hyderabad",
+    "chennai": "Chennai",
+    "pune": "Pune",
     "india": "",
 }
 
 JSEARCH_LOCATION_TEXT = {
     "kochi": "Kochi, India",
+    "trivandrum": "Thiruvananthapuram, India",
+    "kozhikode": "Kozhikode, India",
     "kerala": "Kerala, India",
     "kerala_remote": "Kerala, India",
+    "bangalore": "Bangalore, India",
+    "hyderabad": "Hyderabad, India",
+    "chennai": "Chennai, India",
+    "pune": "Pune, India",
     "india": "India",
 }
 
@@ -361,10 +389,21 @@ EMPLOYMENT_TYPES = {
     "fulltime_contract": "FULLTIME,CONTRACTOR",
 }
 
+EXPERIENCE_KEYWORDS = {
+    "any": "",
+    "fresher": "fresher entry level",
+    "junior": "1 to 3 years",
+    "mid": "3 to 5 years",
+    "senior": "5+ years senior",
+}
+
 class JobSearchRequest(BaseModel):
     location: str
+    custom_location: Optional[str] = None
     role_type: str
+    custom_role: Optional[str] = None
     job_type: str
+    experience: Optional[str] = "any"
 
 def search_adzuna_jobs(keywords, location):
     url = "https://api.adzuna.com/v1/api/jobs/in/search/1"
@@ -428,14 +467,25 @@ def search_jsearch_jobs(keywords, location_text, employment_types):
 
 @app.post("/jobs")
 def jobs(req: JobSearchRequest):
-    adzuna_location = ADZUNA_LOCATION.get(req.location, "")
-    jsearch_location_text = JSEARCH_LOCATION_TEXT.get(req.location, "India")
-    employment_types = EMPLOYMENT_TYPES.get(req.job_type, "FULLTIME")
+    if req.location == "custom" and req.custom_location:
+        adzuna_location = req.custom_location.strip()
+        jsearch_location_text = req.custom_location.strip() + ", India"
+    else:
+        adzuna_location = ADZUNA_LOCATION.get(req.location, "")
+        jsearch_location_text = JSEARCH_LOCATION_TEXT.get(req.location, "India")
 
-    if req.role_type == "all":
+    employment_types = EMPLOYMENT_TYPES.get(req.job_type, "FULLTIME")
+    experience_suffix = EXPERIENCE_KEYWORDS.get(req.experience or "any", "")
+
+    if req.role_type == "custom" and req.custom_role:
+        keyword_sets = [req.custom_role.strip()]
+    elif req.role_type == "all":
         keyword_sets = list(ROLE_KEYWORDS.values())
     else:
         keyword_sets = [ROLE_KEYWORDS.get(req.role_type, "Python developer")]
+
+    if experience_suffix:
+        keyword_sets = [f"{kw} {experience_suffix}" for kw in keyword_sets]
 
     all_results = []
     for kw in keyword_sets:
@@ -461,21 +511,7 @@ def jobs(req: JobSearchRequest):
 
     job_summaries = unique_results[:25]
 
-    summary_prompt = f"""Here are real job listings from multiple sources:
-{json.dumps(job_summaries, indent=2)}
-
-Write a short, clear plain-text summary of the best matching jobs. For each, include title, company, location, salary if available, and the apply link. Group similar roles together. Skip irrelevant or duplicate listings."""
-
-    try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": summary_prompt}],
-        )
-        summary = response.choices[0].message.content
-    except Exception as e:
-        summary = f"Found {len(unique_results)} jobs, but summarization failed: {e}"
-
-    return {"summary": summary, "jobs": job_summaries}
+    return {"jobs": job_summaries}
 
 # ---- Phase 6: Cover Letter Generator ----
 

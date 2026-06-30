@@ -71,10 +71,20 @@ input[type="file"]{font-size:12px;font-family:'IBM Plex Sans', sans-serif;}
 
 #reminderList{margin-top:14px;}
 
+/* ---- Job result cards ---- */
+.job-card{background:#fff;border:1px solid var(--hairline);border-radius:10px;padding:18px 20px;margin-bottom:14px;}
+.job-card h3{font-size:16px;font-weight:700;margin-bottom:4px;}
+.job-card .job-meta{font-size:13px;color:var(--muted);margin-bottom:8px;}
+.job-card .job-source{display:inline-block;font-family:'IBM Plex Mono', monospace;font-size:10px;font-weight:600;letter-spacing:0.06em;color:var(--violet);border:1px solid var(--violet);border-radius:4px;padding:1px 6px;margin-left:8px;}
+.job-card a.apply-link{display:inline-block;margin-top:6px;font-size:13px;font-weight:600;color:var(--violet);text-decoration:none;}
+.job-card a.apply-link:hover{text-decoration:underline;}
+
 /* ---- Preview ---- */
 .preview-container{flex:1;background:#fff;display:flex;flex-direction:column;}
 .preview-bar{font-family:'IBM Plex Mono', monospace;font-size:10.5px;font-weight:600;letter-spacing:0.1em;color:var(--muted);padding:10px 16px;border-bottom:1px solid var(--hairline);flex-shrink:0;}
 iframe{flex:1;width:100%;border:none;}
+.right-panel{flex:1;overflow-y:auto;padding:32px;background:var(--paper);}
+#letterResultsPanel{max-width:760px;margin:0 auto;width:100%;}
 
 @media(max-width:900px){
   .app{flex-direction:column;height:auto;overflow:visible;}
@@ -161,29 +171,65 @@ iframe{flex:1;width:100%;border:none;}
         <button class="btn" style="--btn-color:var(--amber)" onclick="editProject()">Apply Edit</button>
         <div id="editStatus" class="status-line"></div>
       </div>
+
+      <hr>
+
+      <div class="field-block">
+        <label class="field-label">Direct file editor</label>
+        <input type="text" id="manualFileName" value="style.css" placeholder="e.g. style.css">
+        <button class="btn-ghost" onclick="loadFileForEditing()">Load File</button>
+        <textarea id="manualFileContent" style="min-height:280px; font-family:'IBM Plex Mono', monospace; font-size:12.5px;" placeholder="Click 'Load File' to fetch its current content"></textarea>
+        <button class="btn" style="--btn-color:var(--amber)" onclick="saveFileManually()">Save File</button>
+        <div id="manualEditStatus" class="status-line"></div>
+      </div>
     </div>
 
     <div class="tool-pane" id="pane-jobs" style="display:none;">
       <div class="pane-header" style="--tag:var(--violet)">
         <span class="tag-label">03 / JOBS</span>
         <h1>Job Search Assistant</h1>
-        <p class="sub">Searches live listings across multiple sources and summarizes the best matches.</p>
+        <p class="sub">Searches live listings across multiple sources. Results appear on the right.</p>
       </div>
       <div class="field-block">
         <label class="field-label">Location</label>
-        <select id="jobLocation">
-            <option value="kochi">Kochi only</option>
+        <select id="jobLocation" onchange="toggleCustomField('jobLocation','customLocationRow')">
+            <option value="kochi">Kochi</option>
+            <option value="trivandrum">Thiruvananthapuram</option>
+            <option value="kozhikode">Kozhikode</option>
             <option value="kerala">Anywhere in Kerala</option>
             <option value="kerala_remote">Kerala + Remote</option>
+            <option value="bangalore">Bangalore</option>
+            <option value="hyderabad">Hyderabad</option>
+            <option value="chennai">Chennai</option>
+            <option value="pune">Pune</option>
             <option value="india" selected>Anywhere in India</option>
+            <option value="custom">Enter manually...</option>
         </select>
+        <div id="customLocationRow" style="display:none; margin-top:8px;">
+          <input type="text" id="customLocation" placeholder="e.g. Mumbai">
+        </div>
+
         <label class="field-label">Role type</label>
-        <select id="jobRoleType">
+        <select id="jobRoleType" onchange="toggleCustomField('jobRoleType','customRoleRow')">
             <option value="backend">Django/FastAPI backend</option>
             <option value="fullstack">Full-stack (React + Python)</option>
             <option value="ai">AI/LLM engineering</option>
             <option value="all" selected>All of the above</option>
+            <option value="custom">Enter manually...</option>
         </select>
+        <div id="customRoleRow" style="display:none; margin-top:8px;">
+          <input type="text" id="customRole" placeholder="e.g. DevOps engineer">
+        </div>
+
+        <label class="field-label">Experience level</label>
+        <select id="jobExperience">
+            <option value="any" selected>Any experience</option>
+            <option value="fresher">Fresher / Entry level</option>
+            <option value="junior">1-3 years</option>
+            <option value="mid">3-5 years</option>
+            <option value="senior">5+ years</option>
+        </select>
+
         <label class="field-label">Job type</label>
         <select id="jobType">
             <option value="fulltime">Full-time only</option>
@@ -191,7 +237,7 @@ iframe{flex:1;width:100%;border:none;}
             <option value="fulltime_contract" selected>Full-time + Contract/Freelance</option>
         </select>
         <button class="btn" style="--btn-color:var(--violet)" onclick="searchJobs()">Search Jobs</button>
-        <div id="jobResults"></div>
+        <div id="jobResults" class="status-line"></div>
       </div>
     </div>
 
@@ -202,6 +248,9 @@ iframe{flex:1;width:100%;border:none;}
         <p class="sub">Upload a resume once, then generate a tailored letter for any job description.</p>
       </div>
       <div class="field-block">
+        <label class="field-label">Your name</label>
+        <input type="text" id="clYourName" placeholder="e.g. Arun S Kumar">
+
         <label class="field-label">Job title</label>
         <input type="text" id="clJobTitle" placeholder="e.g. Python Full Stack Developer">
         <label class="field-label">Company</label>
@@ -216,8 +265,6 @@ iframe{flex:1;width:100%;border:none;}
         <div id="resumeStatus" class="status-line small"></div>
         <textarea id="clBackground">Python Full Stack Developer and AI Engineer with 2+ years of experience in Django, FastAPI, React.js, REST APIs, MySQL, JWT authentication, Docker, and RAG/LLM pipeline development. B.Tech in Civil Engineering with a Chartered Engineer credential. Prior experience at Xinfoz Technologies and Agrivator Technologies.</textarea>
         <button class="btn" style="--btn-color:var(--brick)" onclick="generateCoverLetter()">Generate Cover Letter</button>
-        <div id="coverLetterResult"></div>
-        <button id="copyLetterBtn" class="btn-ghost" onclick="copyLetter()">Copy Letter</button>
       </div>
     </div>
 
@@ -238,24 +285,63 @@ iframe{flex:1;width:100%;border:none;}
             <option value="14">2 weeks</option>
         </select>
         <button class="btn" style="--btn-color:var(--indigo)" onclick="addReminder()">Add Reminder</button>
-        <div id="reminderList"></div>
       </div>
     </div>
 
   </div>
 
   <div class="preview-container">
-    <div class="preview-bar">LIVE PREVIEW</div>
+    <div class="preview-bar" id="previewBarLabel">LIVE PREVIEW</div>
     <iframe id="preview"></iframe>
+    <div id="jobResultsPanel" class="right-panel" style="display:none;"></div>
+    <div id="letterResultsPanel" class="right-panel" style="display:none;">
+      <div id="coverLetterResult"></div>
+      <button id="copyLetterBtn" class="btn-ghost" onclick="copyLetter()">Copy Letter</button>
+    </div>
+    <div id="reminderResultsPanel" class="right-panel" style="display:none;">
+      <div id="reminderList"></div>
+    </div>
   </div>
 
 </div>
 <script>
+const RIGHT_PANELS = {
+    build: { type: 'preview', label: 'LIVE PREVIEW' },
+    edit: { type: 'preview', label: 'LIVE PREVIEW' },
+    jobs: { type: 'panel', id: 'jobResultsPanel', label: 'JOB RESULTS' },
+    letters: { type: 'panel', id: 'letterResultsPanel', label: 'COVER LETTER' },
+    reminders: { type: 'panel', id: 'reminderResultsPanel', label: 'REMINDERS' },
+};
+
 function showTool(name){
     document.querySelectorAll('.tool-pane').forEach(function(p){ p.style.display = 'none'; });
     document.getElementById('pane-' + name).style.display = 'block';
     document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
     document.querySelector('.tab-btn[data-tool="' + name + '"]').classList.add('active');
+
+    const preview = document.getElementById('preview');
+    const previewBarLabel = document.getElementById('previewBarLabel');
+    const allPanels = ['jobResultsPanel', 'letterResultsPanel', 'reminderResultsPanel'];
+
+    preview.style.display = 'none';
+    allPanels.forEach(id => { document.getElementById(id).style.display = 'none'; });
+
+    const config = RIGHT_PANELS[name];
+    if (!config) return;
+
+    previewBarLabel.textContent = config.label;
+
+    if (config.type === 'preview') {
+        preview.style.display = 'block';
+    } else {
+        document.getElementById(config.id).style.display = 'block';
+    }
+}
+
+function toggleCustomField(selectId, rowId) {
+    const select = document.getElementById(selectId);
+    const row = document.getElementById(rowId);
+    row.style.display = select.value === 'custom' ? 'block' : 'none';
 }
 
 async function generateApp() {
@@ -431,33 +517,118 @@ function loadFile(filename) {
     document.getElementById("preview").src = "/preview/" + encodeURIComponent(filename) + "?t=" + Date.now();
 }
 
+async function loadFileForEditing() {
+    const filename = document.getElementById("manualFileName").value.trim();
+    const status = document.getElementById("manualEditStatus");
+    if (!filename) { status.textContent = "Enter a filename first."; return; }
+
+    status.textContent = "Loading...";
+    try {
+        const res = await fetch("/file/" + encodeURIComponent(filename));
+        if (!res.ok) {
+            const err = await res.json();
+            status.textContent = "Error: " + (err.detail || "Unknown error");
+            return;
+        }
+        const data = await res.json();
+        document.getElementById("manualFileContent").value = data.content;
+        status.textContent = "Loaded " + filename + ". Edit below, then click Save.";
+    } catch (error) {
+        console.error(error);
+        status.textContent = "Something went wrong while loading the file.";
+    }
+}
+
+async function saveFileManually() {
+    const filename = document.getElementById("manualFileName").value.trim();
+    const content = document.getElementById("manualFileContent").value;
+    const status = document.getElementById("manualEditStatus");
+    if (!filename) { status.textContent = "Enter a filename first."; return; }
+
+    status.textContent = "Saving...";
+    try {
+        const res = await fetch("/file", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ filename, content })
+        });
+        if (!res.ok) {
+            const err = await res.json();
+            status.textContent = "Error: " + (err.detail || "Unknown error");
+            return;
+        }
+        status.textContent = "Saved " + filename + ".";
+        if (filename === "index.html" || filename.endsWith(".css") || filename.endsWith(".js")) {
+            document.getElementById("preview").src = "/preview/index.html?t=" + Date.now();
+        }
+    } catch (error) {
+        console.error(error);
+        status.textContent = "Something went wrong while saving the file.";
+    }
+}
+
 async function searchJobs() {
     const location = document.getElementById("jobLocation").value;
+    const custom_location = document.getElementById("customLocation").value.trim();
     const role_type = document.getElementById("jobRoleType").value;
+    const custom_role = document.getElementById("customRole").value.trim();
+    const experience = document.getElementById("jobExperience").value;
     const job_type = document.getElementById("jobType").value;
-    const resultsBox = document.getElementById("jobResults");
 
-    resultsBox.textContent = "Searching for jobs... this may take a few moments.";
+    const statusBox = document.getElementById("jobResults");
+    const panel = document.getElementById("jobResultsPanel");
+
+    statusBox.textContent = "Searching for jobs... this may take a few moments.";
+    panel.innerHTML = "<p style='color:#7A766D;'>Searching for jobs...</p>";
 
     try {
         const res = await fetch("/jobs", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ location, role_type, job_type })
+            body: JSON.stringify({ location, custom_location, role_type, custom_role, job_type, experience })
         });
 
         if (!res.ok) {
             const err = await res.json();
-            resultsBox.textContent = "Error: " + (err.detail || "Unknown error");
+            statusBox.textContent = "Error: " + (err.detail || "Unknown error");
+            panel.innerHTML = "<p style='color:#9C3D32;'>Error: " + (err.detail || "Unknown error") + "</p>";
             return;
         }
 
         const data = await res.json();
-        resultsBox.textContent = data.summary;
+        statusBox.textContent = `Found ${data.jobs.length} job(s). See results on the right.`;
+
+        if (!data.jobs || data.jobs.length === 0) {
+            panel.innerHTML = "<p style='color:#7A766D;'>No job listings found for these criteria. Try different options.</p>";
+            return;
+        }
+
+        panel.innerHTML = "";
+        data.jobs.forEach(job => {
+            const card = document.createElement("div");
+            card.className = "job-card";
+
+            let salaryText = "";
+            if (job.salary_min || job.salary_max) {
+                const min = job.salary_min ? Math.round(job.salary_min).toLocaleString() : "?";
+                const max = job.salary_max ? Math.round(job.salary_max).toLocaleString() : "?";
+                salaryText = ` &middot; ₹${min} - ₹${max}`;
+            }
+
+            card.innerHTML = `
+                <h3>${job.title || "Untitled role"}</h3>
+                <div class="job-meta">${job.company || "Unknown company"} &middot; ${job.location || "Location not specified"}${salaryText}
+                    <span class="job-source">${job.source}</span>
+                </div>
+                <a class="apply-link" href="${job.url}" target="_blank" rel="noopener noreferrer">Apply / View listing &rarr;</a>
+            `;
+            panel.appendChild(card);
+        });
 
     } catch (error) {
         console.error(error);
-        resultsBox.textContent = "Something went wrong while searching for jobs.";
+        statusBox.textContent = "Something went wrong while searching for jobs.";
+        panel.innerHTML = "<p style='color:#9C3D32;'>Something went wrong while searching for jobs.</p>";
     }
 }
 
@@ -530,10 +701,11 @@ async function generateCoverLetter() {
         }
 
         const data = await res.json();
-        lastCoverLetterText = data.letter;
+        const yourName = document.getElementById("clYourName").value.trim() || "[Your Name]";
+        lastCoverLetterText = data.letter.replace(/\[Candidate'?s? name\]/gi, yourName);
 
         resultBox.innerHTML = "";
-        data.letter.split(/\n\s*\n/).forEach(para => {
+        lastCoverLetterText.split(/\n\s*\n/).forEach(para => {
             if (para.trim()) {
                 const p = document.createElement("p");
                 p.innerHTML = para.trim().replace(/\n/g, "<br>");
